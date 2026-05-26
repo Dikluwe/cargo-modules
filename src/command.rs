@@ -13,10 +13,12 @@ use crate::{
 
 use self::{
     dependencies::command::Command as DependenciesCommand,
-    orphans::command::Command as OrphansCommand, structure::command::Command as StructureCommand,
+    export_json::command::Command as ExportJsonCommand, orphans::command::Command as OrphansCommand,
+    structure::command::Command as StructureCommand,
 };
 
 pub mod dependencies;
+pub mod export_json;
 pub mod orphans;
 pub mod structure;
 
@@ -48,6 +50,12 @@ pub enum Command {
         about = "Detects unlinked source files within a crate's directory."
     )]
     Orphans(OrphansCommand),
+
+    #[command(
+        name = "export-json",
+        about = "Exports a crate's internal dependency graph as structured JSON."
+    )]
+    ExportJson(ExportJsonCommand),
 }
 
 impl Command {
@@ -56,6 +64,7 @@ impl Command {
             Self::Structure(command) => command.sanitize(),
             Self::Dependencies(command) => command.sanitize(),
             Self::Orphans(command) => command.sanitize(),
+            Self::ExportJson(command) => command.sanitize(),
         }
     }
 
@@ -76,6 +85,8 @@ impl Command {
             Self::Dependencies(command) => command.run(krate, db, edition),
             #[allow(unused_variables)]
             Self::Orphans(command) => command.run(krate, db, &vfs, edition),
+            #[allow(unused_variables)]
+            Self::ExportJson(command) => command.run(krate, db, edition),
         })
     }
 
@@ -84,6 +95,7 @@ impl Command {
             Self::Structure(command) => &command.options.general,
             Self::Dependencies(command) => &command.options.general,
             Self::Orphans(command) => &command.options.general,
+            Self::ExportJson(command) => &command.options.general,
         }
     }
 
@@ -93,6 +105,7 @@ impl Command {
             Self::Structure(command) => &command.options.project,
             Self::Dependencies(command) => &command.options.project,
             Self::Orphans(command) => &command.options.project,
+            Self::ExportJson(command) => &command.options.project,
         }
     }
 
@@ -102,6 +115,7 @@ impl Command {
             Self::Structure(command) => command.load_options(),
             Self::Dependencies(command) => command.load_options(),
             Self::Orphans(command) => command.load_options(),
+            Self::ExportJson(command) => command.load_options(),
         }
     }
 }

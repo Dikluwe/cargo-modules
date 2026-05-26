@@ -213,6 +213,8 @@ dependencies = [
  "ra_ap_syntax",
  "ra_ap_text_edit",
  "ra_ap_vfs",
+ "serde",
+ "serde_json",
  "shellwords",
  "sugar_path",
  "thread_local",

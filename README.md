@@ -391,24 +391,28 @@ Options:
 {
   "crate": "<crate name>",
   "nodes": [
-    { "path": "...", "name": "...", "kind": "...", "visibility": "..." }
+    { "id": 0, "path": "...", "name": "...", "kind": "...", "visibility": "..." }
   ],
   "edges": [
-    { "from": "...", "to": "...", "relation": "owns" | "uses" }
+    { "from": "...", "id_from": 0, "to": "...", "id_to": 1, "relation": "owns" | "uses" }
   ]
 }
 ```
 
-Nodes are sorted by `path`; edges by `(from, to, relation)`. The output is deterministic and stable across runs.
+Nodes are sorted by `(path, id)`; edges by `(from, to, relation, id_from, id_to)`. The output is deterministic within a single invocation.
 
 | Field | Meaning |
 |-------|---------|
-| `nodes[].path` | Canonical path (e.g. `my_crate::module::Item`). Acts as the node's unique identity. |
+| `nodes[].id` | Per-node integer identity, unique within one emitted JSON. Distinguishes nodes that share the same `path` (e.g. an inherent method and a trait-impl method of the same name on the same type, or items synthesized by `#[derive(...)]` colliding with hand-written items). Not guaranteed to be stable across invocations. |
+| `nodes[].path` | Canonical path (e.g. `my_crate::module::Item`). May be shared by two different nodes — use `id` to disambiguate. |
 | `nodes[].name` | Short item name. |
 | `nodes[].kind` | One of: `crate`, `mod`, `fn`, `const fn`, `async fn`, `unsafe fn`, `struct`, `union`, `enum`, `variant`, `const`, `static`, `trait`, `unsafe trait`, `type`, `builtin`, `macro`. |
 | `nodes[].visibility` | One of: `pub`, `pub(crate)`, `pub(in crate::<path>)`, `pub(super)`, `priv`. |
 | `edges[].from` / `edges[].to` | Canonical `path` of the source/target node. Direction is preserved. |
+| `edges[].id_from` / `edges[].id_to` | `id` of the source/target node. Use these — not `from`/`to` — when path collisions matter. Every `id_from`/`id_to` is guaranteed to match the `id` of exactly one node in the same JSON. |
 | `edges[].relation` | `owns` (containment: a module contains an item) or `uses` (a use: one item refers to another). |
+
+The `id` / `id_from` / `id_to` fields were added on top of the original shape; consumers that only read `path`, `from`, `to` continue to work unchanged.
 
 #### Note: `--sysroot` is opt-in by design
 

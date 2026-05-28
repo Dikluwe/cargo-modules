@@ -36,6 +36,10 @@ fn json_is_well_formed_on_minimal_crate() {
     assert_eq!(only["name"].as_str(), Some("package_lib_target"));
     assert_eq!(only["kind"].as_str(), Some("crate"));
     assert_eq!(only["visibility"].as_str(), Some("pub"));
+    assert!(
+        only["id"].is_u64(),
+        "every node must carry an integer `id`; got: {only}"
+    );
 
     let edges = obj["edges"].as_array().expect("edges is array");
     assert!(edges.is_empty(), "empty crate should have no edges");
@@ -144,6 +148,113 @@ fn every_edge_endpoint_references_an_existing_node() {
         assert!(node_paths.contains(from), "edge.from {from:?} not in nodes");
         assert!(node_paths.contains(to), "edge.to {to:?} not in nodes");
     }
+}
+
+#[test]
+fn every_edge_id_endpoint_references_an_existing_node_id() {
+    // Per-node identity invariant: for every edge, `id_from` and `id_to`
+    // resolve to a node that is present in the `nodes` array. Without this,
+    // downstream consumers cannot trust the new id fields.
+    let value = run_export_json("struct_fields", &[]);
+
+    let node_ids: HashSet<u64> = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_u64().expect("every node must have integer id"))
+        .collect();
+
+    for edge in value["edges"].as_array().unwrap() {
+        let id_from = edge["id_from"]
+            .as_u64()
+            .expect("every edge must have integer id_from");
+        let id_to = edge["id_to"]
+            .as_u64()
+            .expect("every edge must have integer id_to");
+        assert!(
+            node_ids.contains(&id_from),
+            "edge.id_from {id_from} not in node ids"
+        );
+        assert!(
+            node_ids.contains(&id_to),
+            "edge.id_to {id_to} not in node ids"
+        );
+    }
+}
+
+#[test]
+fn node_ids_are_unique_within_json() {
+    // The `id` field must uniquely identify a node within one emitted JSON.
+    // Two nodes sharing an id would defeat the purpose of the field.
+    let value = run_export_json("struct_fields", &[]);
+
+    let ids: Vec<u64> = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_u64().unwrap())
+        .collect();
+
+    let unique: HashSet<u64> = ids.iter().copied().collect();
+    assert_eq!(
+        ids.len(),
+        unique.len(),
+        "node ids must be unique; got {} nodes but only {} distinct ids",
+        ids.len(),
+        unique.len()
+    );
+}
+
+#[test]
+fn colliding_paths_have_distinct_ids_and_edges() {
+    // Path-collision motivation test: when two distinct nodes share the same
+    // canonical `path` (this happens e.g. with an inherent + trait impl of
+    // the same method), the `id` field must still tell them apart, and the
+    // edges involving each must reference the correct `id_from`/`id_to`.
+    let value = run_export_json("colliding_paths", &[]);
+
+    let colliding_path = "colliding_paths::S::duplicated";
+    let colliding_nodes: Vec<&Value> = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["path"].as_str() == Some(colliding_path))
+        .collect();
+
+    assert_eq!(
+        colliding_nodes.len(),
+        2,
+        "fixture is designed to produce two nodes with path {colliding_path:?}; \
+         got {} — has the fixture or the analyzer behavior changed?",
+        colliding_nodes.len()
+    );
+
+    let id_a = colliding_nodes[0]["id"].as_u64().unwrap();
+    let id_b = colliding_nodes[1]["id"].as_u64().unwrap();
+    assert_ne!(
+        id_a, id_b,
+        "colliding-path nodes must have distinct ids: both got {id_a}"
+    );
+
+    // Each colliding node must be the `id_to` of at least one `owns` edge
+    // coming from the parent struct — independently. If both `owns` edges
+    // pointed to the same id, we'd be hiding the collision again.
+    let owns_targets: HashSet<u64> = value["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| {
+            e["from"].as_str() == Some("colliding_paths::S")
+                && e["to"].as_str() == Some(colliding_path)
+                && e["relation"].as_str() == Some("owns")
+        })
+        .map(|e| e["id_to"].as_u64().unwrap())
+        .collect();
+
+    assert!(
+        owns_targets.contains(&id_a) && owns_targets.contains(&id_b),
+        "each colliding node must appear as id_to of an `owns` edge; got owns_targets={owns_targets:?}, ids=({id_a}, {id_b})"
+    );
 }
 
 #[test]

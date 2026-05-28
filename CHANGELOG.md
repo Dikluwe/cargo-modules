@@ -20,7 +20,7 @@ Please make sure to add your changes to the appropriate categories:
 
 ### Added
 
-- n/a
+- `export-json`: a per-node **semantic descriptor**, motivated by the investigation in `lab/investiga-descritor-fork/relatorio.md`. Default fields (always emitted when applicable): `trait` (trait name), `trait_ref` (trait reference with generic arguments), the `is_const`/`is_async`/`is_unsafe` modifiers, structured `cfg`, `macro_kind`, and `is_non_exhaustive`. Behind a new `--rich` flag: `signature` and `generics` (with bounds). All fields are additive — the pre-existing schema, including the `kind` string, is unchanged.
 
 ### Changed
 

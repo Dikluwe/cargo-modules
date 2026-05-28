@@ -26,4 +26,9 @@ pub struct Options {
     /// Include sysroot crates (`std`, `core` & friends) in the exported graph.
     #[arg(long = "sysroot")]
     pub sysroot: bool,
+
+    /// Emit the rich descriptor: additional, more expensive per-node fields
+    /// (`signature`, `generics`) on top of the default descriptor.
+    #[arg(long = "rich")]
+    pub rich: bool,
 }

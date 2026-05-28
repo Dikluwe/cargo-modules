@@ -7,10 +7,11 @@ use std::fmt;
 use hir::db::HirDatabase;
 use ra_ap_cfg::{self as cfg};
 use ra_ap_hir::{self as hir};
+use serde::Serialize;
 
 use crate::{analyzer, item::Item};
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Serialize)]
 pub enum ItemCfgAttr {
     Flag(String),
     KeyValue(String, String),

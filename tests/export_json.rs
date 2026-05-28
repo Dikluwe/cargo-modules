@@ -257,6 +257,203 @@ fn colliding_paths_have_distinct_ids_and_edges() {
     );
 }
 
+fn nodes_with_path<'a>(value: &'a Value, path: &str) -> Vec<&'a Value> {
+    value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["path"].as_str() == Some(path))
+        .collect()
+}
+
+fn node_with_path<'a>(value: &'a Value, path: &str) -> &'a Value {
+    let matches = nodes_with_path(value, path);
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one node with path {path:?}, got {}",
+        matches.len()
+    );
+    matches[0]
+}
+
+#[test]
+fn trait_field_distinguishes_colliding_trait_methods() {
+    // Two distinct traits (`Alpha`, `Beta`) impl'd for the same type, each with
+    // a method named `shared`. The methods collide on `path`; the `trait` field
+    // must tell them apart. (Analogue of `Display::fmt` vs `Debug::fmt`, with
+    // user-defined traits so no `--sysroot` is needed.)
+    let value = run_export_json("trait_descriptor", &[]);
+
+    let colliding = nodes_with_path(&value, "trait_descriptor::S::shared");
+    assert_eq!(
+        colliding.len(),
+        2,
+        "fixture should produce two colliding `shared` nodes"
+    );
+
+    let mut traits: Vec<&str> = colliding
+        .iter()
+        .map(|n| {
+            n["trait"]
+                .as_str()
+                .unwrap_or_else(|| panic!("colliding trait method must carry a `trait`: {n}"))
+        })
+        .collect();
+    traits.sort_unstable();
+    assert_eq!(
+        traits,
+        ["Alpha", "Beta"],
+        "the two `shared` methods must have distinct trait names"
+    );
+}
+
+#[test]
+fn trait_ref_distinguishes_same_trait_different_args() {
+    // One generic trait `Convert<T>` impl'd twice with different arguments. The
+    // bare `trait` is "Convert" for both; only `trait_ref` distinguishes them.
+    // (Analogue of `From<A>` vs `From<B>`.)
+    let value = run_export_json("trait_descriptor", &[]);
+
+    let colliding = nodes_with_path(&value, "trait_descriptor::S::convert");
+    assert_eq!(colliding.len(), 2, "expected two colliding `convert` nodes");
+
+    // Bare trait name coincides.
+    for node in &colliding {
+        assert_eq!(
+            node["trait"].as_str(),
+            Some("Convert"),
+            "both `convert` methods belong to trait `Convert`"
+        );
+    }
+
+    // trait_ref (with args) differs.
+    let mut refs: Vec<&str> = colliding
+        .iter()
+        .map(|n| {
+            n["trait_ref"]
+                .as_str()
+                .unwrap_or_else(|| panic!("impl method must carry a `trait_ref`: {n}"))
+        })
+        .collect();
+    refs.sort_unstable();
+    assert_eq!(
+        refs,
+        ["Convert<A>", "Convert<B>"],
+        "trait_ref must carry the distinguishing generic arguments"
+    );
+}
+
+#[test]
+fn inherent_impl_method_has_no_trait() {
+    let value = run_export_json("trait_descriptor", &[]);
+    let inherent = node_with_path(&value, "trait_descriptor::S::inherent");
+    assert!(
+        inherent.get("trait").is_none() || inherent["trait"].is_null(),
+        "inherent method must have no trait; got: {inherent}"
+    );
+    assert!(
+        inherent.get("trait_ref").is_none() || inherent["trait_ref"].is_null(),
+        "inherent method must have no trait_ref; got: {inherent}"
+    );
+}
+
+#[test]
+fn kind_modifiers_are_additive() {
+    // The structured modifier booleans are added *alongside* the `kind` string,
+    // which must stay exactly as before.
+    let value = run_export_json("trait_descriptor", &[]);
+
+    let const_fn = node_with_path(&value, "trait_descriptor::a_const_fn");
+    assert_eq!(const_fn["is_const"].as_bool(), Some(true));
+    assert_eq!(
+        const_fn["kind"].as_str(),
+        Some("const fn"),
+        "kind string must remain unchanged"
+    );
+
+    let async_fn = node_with_path(&value, "trait_descriptor::an_async_fn");
+    assert_eq!(async_fn["is_async"].as_bool(), Some(true));
+    assert_eq!(async_fn["kind"].as_str(), Some("async fn"));
+
+    let unsafe_fn = node_with_path(&value, "trait_descriptor::an_unsafe_fn");
+    assert_eq!(unsafe_fn["is_unsafe"].as_bool(), Some(true));
+    assert_eq!(unsafe_fn["kind"].as_str(), Some("unsafe fn"));
+}
+
+#[test]
+fn non_exhaustive_is_emitted() {
+    let value = run_export_json("trait_descriptor", &[]);
+    let enom = node_with_path(&value, "trait_descriptor::NonExhaustiveEnum");
+    assert_eq!(
+        enom["is_non_exhaustive"].as_bool(),
+        Some(true),
+        "the `#[non_exhaustive]` enum must carry is_non_exhaustive=true"
+    );
+}
+
+#[test]
+fn rich_fields_are_absent_without_flag() {
+    let value = run_export_json("trait_descriptor", &[]);
+    for node in value["nodes"].as_array().unwrap() {
+        assert!(
+            node.get("signature").is_none(),
+            "no `signature` without --rich; got: {node}"
+        );
+        assert!(
+            node.get("generics").is_none(),
+            "no `generics` without --rich; got: {node}"
+        );
+    }
+}
+
+#[test]
+fn rich_fields_are_present_with_flag() {
+    let value = run_export_json("trait_descriptor", &["--rich"]);
+
+    let generic_fn = node_with_path(&value, "trait_descriptor::generic_fn");
+    assert!(
+        generic_fn["signature"].as_str().is_some(),
+        "expected a rendered signature with --rich; got: {generic_fn}"
+    );
+
+    let generics = generic_fn["generics"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected generics array with --rich; got: {generic_fn}"));
+    let names: Vec<&str> = generics
+        .iter()
+        .map(|g| g["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"T"),
+        "generic parameter `T` must be listed; got: {names:?}"
+    );
+}
+
+#[test]
+fn preexisting_fields_are_unchanged() {
+    // Backwards-compatibility guard: the original schema fields are all still
+    // present on every node/edge, regardless of the new descriptor.
+    let value = run_export_json("trait_descriptor", &[]);
+
+    for node in value["nodes"].as_array().unwrap() {
+        for key in ["id", "path", "name", "kind", "visibility"] {
+            assert!(
+                node.get(key).is_some(),
+                "node missing pre-existing field {key:?}: {node}"
+            );
+        }
+    }
+    for edge in value["edges"].as_array().unwrap() {
+        for key in ["from", "to", "relation", "id_from", "id_to"] {
+            assert!(
+                edge.get(key).is_some(),
+                "edge missing pre-existing field {key:?}: {edge}"
+            );
+        }
+    }
+}
+
 #[test]
 fn compact_flag_produces_single_line() {
     let mut command = cmd("package_lib_target", ["export-json", "--compact"].iter().map(|s| s.to_string()).collect::<Vec<_>>().iter());

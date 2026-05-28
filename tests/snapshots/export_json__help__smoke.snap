@@ -27,4 +27,5 @@ Options:
       --cfg-test                       Analyze with `#[cfg(test)]` enabled (i.e as if built via `cargo test`)
       --compact                        Emit JSON on a single line (no indentation)
       --sysroot                        Include sysroot crates (`std`, `core` & friends) in the exported graph
+      --rich                           Emit the rich descriptor: additional, more expensive per-node fields (`signature`, `generics`) on top of the default descriptor
   -h, --help                           Print help

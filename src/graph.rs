@@ -20,14 +20,39 @@ pub type Edge = Relationship;
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq, Debug)]
 pub enum Relationship {
-    Uses,
+    Uses(UsesKind),
     Owns,
+}
+
+/// Subtype of a `uses` edge, recording *how* the edge was created.
+///
+/// The builder fuses two semantically distinct edges under `uses`:
+/// a genuine type dependency from a signature/field (`walk_and_push_type`)
+/// and an `use`-declaration attributed to a module (the scope loop of
+/// `process_module`). Carrying the subtype keeps both `uses` (so `relation`
+/// and the other subcommands are unchanged) while making them distinguishable
+/// downstream.
+#[derive(Copy, Clone, Hash, Eq, PartialEq, Debug)]
+pub enum UsesKind {
+    /// Direct use of a type in a signature, field or return position.
+    Reference,
+    /// An `use` declaration attributed to the module (a scope import).
+    Import,
+}
+
+impl UsesKind {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Reference => "reference",
+            Self::Import => "import",
+        }
+    }
 }
 
 impl Relationship {
     pub fn display_name(&self) -> &'static str {
         match self {
-            Self::Uses => "uses",
+            Self::Uses(_) => "uses",
             Self::Owns => "owns",
         }
     }
@@ -36,7 +61,7 @@ impl Relationship {
 impl fmt::Display for Relationship {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
-            Self::Uses => "Uses",
+            Self::Uses(_) => "Uses",
             Self::Owns => "Owns",
         };
         write!(f, "{name}")

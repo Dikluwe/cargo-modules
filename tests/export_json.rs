@@ -130,6 +130,61 @@ fn both_owns_and_uses_edges_are_emitted_with_correct_direction() {
 }
 
 #[test]
+fn uses_edges_carry_reference_vs_import_subtype() {
+    // The `github_issue_102` fixture has a module `a` that both imports a type
+    // (`use self::b::X;`) and contains a struct `Z` whose field references it
+    // (`x: X`). That gives the two distinct `uses` subtypes between the same
+    // target `a::b::X`:
+    //   - module `a` -> `a::b::X` via the `use`           => "import"
+    //   - struct `a::Z` -> `a::b::X` via the field type   => "reference"
+    let value = run_export_json("github_issue_102", &[]);
+    let edges = value["edges"].as_array().expect("edges is array");
+
+    let uses_kind = |from: &str, to: &str| -> Option<&str> {
+        edges
+            .iter()
+            .find(|e| {
+                e["from"].as_str() == Some(from)
+                    && e["to"].as_str() == Some(to)
+                    && e["relation"].as_str() == Some("uses")
+            })
+            .and_then(|e| e["uses_kind"].as_str())
+    };
+
+    assert_eq!(
+        uses_kind("github_issue_102::a", "github_issue_102::a::b::X"),
+        Some("import"),
+        "the module's `use` of X must be tagged as an import"
+    );
+    assert_eq!(
+        uses_kind("github_issue_102::a::Z", "github_issue_102::a::b::X"),
+        Some("reference"),
+        "the struct field referencing X must be tagged as a reference"
+    );
+
+    // `owns` edges never carry a `uses_kind`, and `uses_kind` is only ever one
+    // of the two known values.
+    for edge in edges {
+        match edge["relation"].as_str() {
+            Some("owns") => assert!(
+                edge.get("uses_kind").is_none(),
+                "owns edge must not carry uses_kind: {edge}"
+            ),
+            Some("uses") => {
+                let kind = edge["uses_kind"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("uses edge must carry uses_kind: {edge}"));
+                assert!(
+                    kind == "reference" || kind == "import",
+                    "unexpected uses_kind: {kind}"
+                );
+            }
+            other => panic!("unexpected relation: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn every_edge_endpoint_references_an_existing_node() {
     // Coverage guarantee: nothing in the graph is silently dropped.
     // Each edge endpoint path must appear in the nodes list.

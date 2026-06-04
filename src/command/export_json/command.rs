@@ -5,6 +5,7 @@
 use hir::db::HirDatabase;
 use ra_ap_hir::{self as hir};
 use ra_ap_ide::{self as ide};
+use ra_ap_vfs::{self as vfs};
 
 use clap::Parser;
 
@@ -30,18 +31,22 @@ impl Command {
         self,
         krate: hir::Crate,
         db: &ide::RootDatabase,
+        vfs: &vfs::Vfs,
         edition: ide::Edition,
     ) -> anyhow::Result<()> {
-        let db: &dyn HirDatabase = db;
+        let hir_db: &dyn HirDatabase = db;
 
         tracing::trace!("Building graph ...");
 
-        let builder = GraphBuilder::new(db, edition, krate);
+        let builder = GraphBuilder::new(hir_db, edition, krate);
         let (graph, _crate_node_idx) = builder.build()?;
 
         tracing::trace!("Serializing graph as JSON ...");
 
-        let printer = Printer::new(&self.options, krate, db, edition);
+        // The printer holds the concrete `RootDatabase` (not just `&dyn
+        // HirDatabase`): resolving source positions needs `LineIndexDatabase`,
+        // which `RootDatabase` provides.
+        let printer = Printer::new(&self.options, krate, db, vfs, edition);
         let json = printer.to_json(&graph)?;
 
         println!("{json}");

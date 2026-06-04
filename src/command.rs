@@ -86,7 +86,7 @@ impl Command {
             #[allow(unused_variables)]
             Self::Orphans(command) => command.run(krate, db, &vfs, edition),
             #[allow(unused_variables)]
-            Self::ExportJson(command) => command.run(krate, db, edition),
+            Self::ExportJson(command) => command.run(krate, db, &vfs, edition),
         })
     }
 

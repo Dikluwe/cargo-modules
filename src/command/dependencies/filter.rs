@@ -204,14 +204,22 @@ impl<'a> Filter<'a> {
 
         // The edge-reconciliation above may have resulted in redundant edges, so we need to remove those:
 
-        let mut unique_edges: HashMap<(NodeIndex, NodeIndex, Edge), EdgeIndex> = HashMap::new();
+        // The `uses` subtype (`reference`/`import`) is invisible to the
+        // dependency view, so two same-pair edges that differ only by subtype
+        // (e.g. a child's type-reference and the module's import, collapsed
+        // onto the same parent above) must reconcile to a single edge here.
+        // Keying on `display_name()` (`"owns"`/`"uses"`) collapses the subtype.
+        let mut unique_edges: HashMap<(NodeIndex, NodeIndex, &'static str), EdgeIndex> =
+            HashMap::new();
 
         for edge_ref in graph.edge_references() {
             let source = edge_ref.source();
             let target = edge_ref.target();
             let weight = edge_ref.weight();
             let idx = edge_ref.id();
-            unique_edges.entry((source, target, *weight)).or_insert(idx);
+            unique_edges
+                .entry((source, target, weight.display_name()))
+                .or_insert(idx);
         }
 
         // Drop any redundant edges:
@@ -219,7 +227,7 @@ impl<'a> Filter<'a> {
         graph.retain_edges(|graph, edge_idx| {
             let (source, target) = graph.edge_endpoints(edge_idx).unwrap();
             let weight = graph[edge_idx];
-            let idx = unique_edges[&(source, target, weight)];
+            let idx = unique_edges[&(source, target, weight.display_name())];
             edge_idx == idx
         });
 

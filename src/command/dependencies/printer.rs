@@ -171,7 +171,7 @@ impl<'a> Printer<'a> {
             let attributes = self.edge_attributes(edge);
 
             let constraint = match edge {
-                Edge::Uses => "[constraint=false]",
+                Edge::Uses(_) => "[constraint=false]",
                 Edge::Owns => "[constraint=true]",
             };
 
@@ -268,7 +268,7 @@ impl<'a> Printer<'a> {
         let styles = edge_styles();
 
         let style = match edge {
-            Edge::Uses { .. } => styles.uses,
+            Edge::Uses(_) => styles.uses,
             Edge::Owns => styles.owns,
         };
 

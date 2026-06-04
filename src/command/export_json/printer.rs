@@ -10,9 +10,14 @@
 //! {
 //!   "crate": "<crate name>",
 //!   "nodes": [ { "id": 0, "path": "...", "name": "...", "kind": "...", "visibility": "...", ... } ],
-//!   "edges": [ { "from": "...", "id_from": 0, "to": "...", "id_to": 1, "relation": "owns" | "uses" } ]
+//!   "edges": [ { "from": "...", "id_from": 0, "to": "...", "id_to": 1, "relation": "owns" | "uses", "uses_kind": "reference" | "import" } ]
 //! }
 //! ```
+//!
+//! `uses_kind` is an additive subtype of a `uses` edge: `"reference"` for a
+//! direct use of a type in a signature/field, or `"import"` for an `use`
+//! declaration attributed to a module. It is absent for `owns` edges (and the
+//! `relation` field itself is unchanged: still `"owns"` / `"uses"`).
 //!
 //! The `id` field is the petgraph node index of the underlying graph, exposed
 //! so downstream tooling can distinguish nodes that happen to share the same
@@ -41,7 +46,7 @@ use serde::Serialize;
 
 use crate::{
     analyzer,
-    graph::{Edge, Graph, Node},
+    graph::{Edge, Graph, Node, Relationship},
     item::{ItemCfgAttr, ItemVisibility},
 };
 
@@ -111,6 +116,11 @@ struct JsonEdge {
     to: String,
     id_to: usize,
     relation: &'static str,
+    /// Subtype of a `uses` edge: `"reference"` (direct use in a
+    /// signature/field) or `"import"` (an `use` declaration attributed to the
+    /// module). Absent for `owns`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uses_kind: Option<&'static str>,
 }
 
 pub struct Printer<'a> {
@@ -155,6 +165,7 @@ impl<'a> Printer<'a> {
                     to: graph[target_idx].display_path(self.db, self.edition),
                     id_to: target_idx.index(),
                     relation: relation_name(edge),
+                    uses_kind: uses_kind_name(edge),
                 }
             })
             .collect();
@@ -163,6 +174,7 @@ impl<'a> Printer<'a> {
                 .cmp(&b.from)
                 .then_with(|| a.to.cmp(&b.to))
                 .then_with(|| a.relation.cmp(b.relation))
+                .then_with(|| a.uses_kind.cmp(&b.uses_kind))
                 .then_with(|| a.id_from.cmp(&b.id_from))
                 .then_with(|| a.id_to.cmp(&b.id_to))
         });
@@ -368,6 +380,13 @@ impl<'a> Printer<'a> {
 
 fn relation_name(edge: &Edge) -> &'static str {
     edge.display_name()
+}
+
+fn uses_kind_name(edge: &Edge) -> Option<&'static str> {
+    match edge {
+        Relationship::Uses(kind) => Some(kind.name()),
+        Relationship::Owns => None,
+    }
 }
 
 fn visibility_string(visibility: &ItemVisibility) -> String {

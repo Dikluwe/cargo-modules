@@ -12,7 +12,7 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use crate::{
     analyzer,
-    graph::{Edge, Graph, Node, Relationship},
+    graph::{Edge, Graph, Node, Relationship, UsesKind},
     item::Item,
 };
 
@@ -126,7 +126,10 @@ impl<'a> GraphBuilder<'a> {
                 };
 
                 if let Some(item_idx) = item_idx {
-                    self.add_dependencies(item_idx, dependencies.clone());
+                    // Impl items are functions/consts/type-aliases — their
+                    // dependencies come from `walk_and_push_type`, i.e. type
+                    // references.
+                    self.add_dependencies(item_idx, dependencies.clone(), UsesKind::Reference);
                 }
 
                 item_idx
@@ -173,7 +176,17 @@ impl<'a> GraphBuilder<'a> {
         };
 
         if let Some(node_idx) = node_idx.as_ref() {
-            self.add_dependencies(*node_idx, dependencies.clone());
+            // The subtype is determined by the variant: `process_module`
+            // collects *only* scope/import dependencies (its scope loop), and
+            // never calls `walk_and_push_type`; every other item processor
+            // collects *only* `walk_and_push_type` dependencies (references).
+            // So the variant decides the subtype exactly.
+            let kind = if matches!(module_def_hir, hir::ModuleDef::Module(_)) {
+                UsesKind::Import
+            } else {
+                UsesKind::Reference
+            };
+            self.add_dependencies(*node_idx, dependencies.clone(), kind);
         }
 
         node_idx
@@ -547,7 +560,7 @@ impl<'a> GraphBuilder<'a> {
         });
     }
 
-    fn add_dependencies<I>(&mut self, depender_idx: NodeIndex, dependencies: I)
+    fn add_dependencies<I>(&mut self, depender_idx: NodeIndex, dependencies: I, kind: UsesKind)
     where
         I: IntoIterator<Item = hir::ModuleDef>,
     {
@@ -558,7 +571,7 @@ impl<'a> GraphBuilder<'a> {
                 continue;
             };
 
-            self.add_edge(depender_idx, dependency_hir, Edge::Uses);
+            self.add_edge(depender_idx, dependency_hir, Edge::Uses(kind));
         }
     }
 

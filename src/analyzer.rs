@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use ra_ap_cfg::{self as cfg};
 use ra_ap_hir::{self as hir, AsAssocItem as _, HasAttrs as _, db::HirDatabase};
 use ra_ap_ide::{self as ide};
-use ra_ap_ide_db::{self as ide_db};
+use ra_ap_ide_db::{self as ide_db, LineIndexDatabase as _};
 use ra_ap_load_cargo::{self as load_cargo};
 use ra_ap_paths::{self as paths};
 use ra_ap_project_model::{self as project_model};
@@ -766,6 +766,85 @@ pub fn module_file(module: hir::Module, db: &dyn HirDatabase, vfs: &vfs::Vfs) ->
     }
 
     Some(path.to_owned())
+}
+
+/// Source position of an item: the file and the 1-based, inclusive line range
+/// where it is declared.
+#[derive(Debug)]
+pub struct ItemSourceSpan {
+    pub file: PathBuf,
+    pub start_line: u32,
+    pub end_line: u32,
+}
+
+/// Resolves the source position (file + line range) of any `hir::ModuleDef`.
+///
+/// Generalizes [`module_file`] from "a module's file" to "an item's file and
+/// line span". Items produced by a macro are mapped back to their call site
+/// (via `original_file_range_rooted`, the range analogue of the `original_file`
+/// hop `module_file` already does). Returns `None` for items without an `.rs`
+/// source on disk (e.g. builtin types) or when the path cannot be resolved.
+pub fn item_source_span(
+    module_def_hir: hir::ModuleDef,
+    db: &ide::RootDatabase,
+    vfs: &vfs::Vfs,
+) -> Option<ItemSourceSpan> {
+    let file_range = moduledef_file_range(module_def_hir, db)?;
+
+    let file_id = file_range.file_id.file_id(db);
+    let vfs_path = vfs.file_path(file_id);
+    let abs_path = vfs_path.as_path()?;
+    let path: &Path = abs_path.as_ref();
+
+    if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+        return None;
+    }
+
+    let line_index = db.line_index(file_id);
+    let start = line_index.line_col(file_range.range.start());
+    let end = line_index.line_col(file_range.range.end());
+
+    Some(ItemSourceSpan {
+        file: path.to_owned(),
+        // `LineCol::line` is 0-based; the JSON exposes 1-based line numbers.
+        start_line: start.line + 1,
+        end_line: end.line + 1,
+    })
+}
+
+fn moduledef_file_range(
+    module_def_hir: hir::ModuleDef,
+    db: &ide::RootDatabase,
+) -> Option<hir::FileRange> {
+    match module_def_hir {
+        hir::ModuleDef::Module(module_hir) => {
+            let source = module_hir.definition_source(db);
+            let in_file_node = source.map(|module_source| match module_source {
+                hir::ModuleSource::SourceFile(it) => it.syntax().clone(),
+                hir::ModuleSource::Module(it) => it.syntax().clone(),
+                hir::ModuleSource::BlockExpr(it) => it.syntax().clone(),
+            });
+            Some(in_file_node.original_file_range_rooted(db))
+        }
+        hir::ModuleDef::Function(it) => item_file_range(it, db),
+        hir::ModuleDef::Adt(it) => item_file_range(it, db),
+        hir::ModuleDef::EnumVariant(it) => item_file_range(it, db),
+        hir::ModuleDef::Const(it) => item_file_range(it, db),
+        hir::ModuleDef::Static(it) => item_file_range(it, db),
+        hir::ModuleDef::Trait(it) => item_file_range(it, db),
+        hir::ModuleDef::TypeAlias(it) => item_file_range(it, db),
+        hir::ModuleDef::Macro(it) => item_file_range(it, db),
+        // Builtin types (and any other source-less item) have no `.rs` span.
+        hir::ModuleDef::BuiltinType(_) => None,
+    }
+}
+
+fn item_file_range<S>(item: S, db: &ide::RootDatabase) -> Option<hir::FileRange>
+where
+    S: hir::HasSource,
+{
+    let source = item.source(db)?;
+    Some(source.syntax().original_file_range_rooted(db))
 }
 
 pub fn moduledef_is_crate(module_def_hir: hir::ModuleDef, db: &dyn HirDatabase) -> bool {

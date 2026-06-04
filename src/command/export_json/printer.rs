@@ -9,10 +9,16 @@
 //! ```json
 //! {
 //!   "crate": "<crate name>",
-//!   "nodes": [ { "id": 0, "path": "...", "name": "...", "kind": "...", "visibility": "...", ... } ],
+//!   "nodes": [ { "id": 0, "path": "...", "name": "...", "kind": "...", "visibility": "...", "position": { "file": "...", "start_line": 1, "end_line": 9 }, ... } ],
 //!   "edges": [ { "from": "...", "id_from": 0, "to": "...", "id_to": 1, "relation": "owns" | "uses", "uses_kind": "reference" | "import" } ]
 //! }
 //! ```
+//!
+//! Each node may carry a `position`: the source `file` (absolute path) and the
+//! 1-based, inclusive `start_line`/`end_line` of its declaration. It is absent
+//! for items without an `.rs` source (e.g. builtin types); macro-generated
+//! items map to their call site. This is additive — consumers of the previous
+//! schema keep working.
 //!
 //! `uses_kind` is an additive subtype of a `uses` edge: `"reference"` for a
 //! direct use of a type in a signature/field, or `"import"` for an `use`
@@ -37,9 +43,9 @@
 //! `kind` string — are emitted unchanged, so consumers of the previous schema
 //! keep working.
 
-use hir::db::HirDatabase;
 use ra_ap_hir::{self as hir, AsAssocItem as _, DisplayTarget, HirDisplay as _, MacroKind};
-use ra_ap_ide::Edition;
+use ra_ap_ide::{self as ide, Edition};
+use ra_ap_vfs::{self as vfs};
 
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use serde::Serialize;
@@ -95,11 +101,28 @@ struct JsonNode {
     #[serde(skip_serializing_if = "is_false")]
     is_non_exhaustive: bool,
 
+    /// Source position: the file and 1-based, inclusive line range where the
+    /// item is declared. Absent for items without an `.rs` source on disk
+    /// (e.g. builtin types). Macro-generated items map to their call site.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position: Option<JsonSpan>,
+
     // --- Group B: rich descriptor (only with `--rich`) ---
     #[serde(skip_serializing_if = "Option::is_none")]
     signature: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     generics: Option<Vec<JsonGeneric>>,
+}
+
+#[derive(Serialize)]
+struct JsonSpan {
+    /// Absolute path to the source file (as `analyzer::module_file` resolves
+    /// it). Relativizing to the crate root, if needed, is left to consumers.
+    file: String,
+    /// 1-based line of the item's first character.
+    start_line: u32,
+    /// 1-based line of the item's last character.
+    end_line: u32,
 }
 
 #[derive(Serialize)]
@@ -126,7 +149,8 @@ struct JsonEdge {
 pub struct Printer<'a> {
     options: &'a Options,
     krate: hir::Crate,
-    db: &'a dyn HirDatabase,
+    db: &'a ide::RootDatabase,
+    vfs: &'a vfs::Vfs,
     edition: Edition,
 }
 
@@ -134,13 +158,15 @@ impl<'a> Printer<'a> {
     pub fn new(
         options: &'a Options,
         krate: hir::Crate,
-        db: &'a dyn HirDatabase,
+        db: &'a ide::RootDatabase,
+        vfs: &'a vfs::Vfs,
         edition: Edition,
     ) -> Self {
         Self {
             options,
             krate,
             db,
+            vfs,
             edition,
         }
     }
@@ -210,6 +236,8 @@ impl<'a> Printer<'a> {
             .map(|attrs| attrs.is_non_exhaustive())
             .unwrap_or(false);
 
+        let position = self.node_position(node);
+
         let (signature, generics) = if self.options.rich {
             (self.descriptor_signature(node), self.descriptor_generics(node))
         } else {
@@ -230,6 +258,7 @@ impl<'a> Printer<'a> {
             cfg,
             macro_kind,
             is_non_exhaustive,
+            position,
             signature,
             generics,
         }
@@ -292,6 +321,16 @@ impl<'a> Printer<'a> {
         };
 
         Some(kind.to_owned())
+    }
+
+    /// Source position (file + 1-based line range) of the item, resolved via
+    /// `analyzer::item_source_span`. `None` for source-less items.
+    fn node_position(&self, node: &Node) -> Option<JsonSpan> {
+        analyzer::item_source_span(node.hir, self.db, self.vfs).map(|span| JsonSpan {
+            file: span.file.to_string_lossy().into_owned(),
+            start_line: span.start_line,
+            end_line: span.end_line,
+        })
     }
 
     /// Rendered function signature (`fn(<params>) -> <ret>`). The rendering is

@@ -185,6 +185,67 @@ fn uses_edges_carry_reference_vs_import_subtype() {
 }
 
 #[test]
+fn node_position_is_file_and_line_range() {
+    // Source positions must point at the right file and the right (1-based,
+    // inclusive) line range. `struct_fields` has items at known lines.
+    let value = run_export_json("struct_fields", &[]);
+
+    let position = |path: &str| -> &Value {
+        let node = node_with_path(&value, path);
+        node.get("position")
+            .filter(|p| !p.is_null())
+            .unwrap_or_else(|| panic!("node {path} must carry a position: {node}"))
+    };
+
+    // `type TypeAlias = TargetStruct;` is a single line (line 3).
+    let type_alias = position("struct_fields::TypeAlias");
+    assert!(
+        type_alias["file"]
+            .as_str()
+            .unwrap()
+            .ends_with("struct_fields/src/lib.rs"),
+        "file must be the fixture's lib.rs; got: {type_alias}"
+    );
+    assert_eq!(type_alias["start_line"].as_u64(), Some(3));
+    assert_eq!(type_alias["end_line"].as_u64(), Some(3));
+
+    // `TargetStruct` spans its `#[derive(..)]` attribute (line 9) through the
+    // struct itself (line 10) — the range covers the whole declaration.
+    let target = position("struct_fields::TargetStruct");
+    assert_eq!(target["start_line"].as_u64(), Some(9));
+    assert_eq!(target["end_line"].as_u64(), Some(10));
+
+    // The crate root maps to the whole source file (starts at line 1).
+    let krate = position("struct_fields");
+    assert_eq!(krate["start_line"].as_u64(), Some(1));
+}
+
+#[test]
+fn position_distinguishes_colliding_path_nodes() {
+    // The two `S::duplicated` methods (inherent impl vs trait impl) collide on
+    // `path`; their positions point at different lines, an independent
+    // discriminator alongside `id`.
+    let value = run_export_json("colliding_paths", &[]);
+
+    let mut lines: Vec<u64> = nodes_with_path(&value, "colliding_paths::S::duplicated")
+        .iter()
+        .map(|n| {
+            n["position"]["start_line"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("colliding method must carry a position: {n}"))
+        })
+        .collect();
+    lines.sort_unstable();
+
+    // Inherent impl `duplicated` is on line 6; the trait impl's is on line 14.
+    assert_eq!(
+        lines,
+        [6, 14],
+        "the two colliding methods must sit at distinct source lines"
+    );
+}
+
+#[test]
 fn every_edge_endpoint_references_an_existing_node() {
     // Coverage guarantee: nothing in the graph is silently dropped.
     // Each edge endpoint path must appear in the nodes list.
